@@ -1,0 +1,98 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ githubevent.pull_request.number || githubevent.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/ai-review'))
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run AI PR Review
+        id: review
+        run: npm run review:actions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          DEFAULT_MODEL: ${{ vars.DEFAULT_MODEL || 'claude-opus-4-20240229' }}
+          ENABLE_MODEL_ROUTING: ${{ vars.ENABLE_MODEL_ROUTING || 'true' }}
+          TOKEN_BUDGET: ${{ vars.TOKEN_BUDGET || '8000' }}
+          CONFIDENCE_THRESHOLD: ${{ vars.CONFIDENCE_THRESHOLD || '0.7' }}
+          MIN_SEVERITY_LEVEL: ${{ vars.MIN_SEVERITY_LEVEL || 'medium' }}
+          ENABLE_SUMMARY: ${{ vars.ENABLE_SUMMARY || 'true' }}
+          ENABLE_RISK_DETECTION: ${{ vars.ENABLE_RISK_DETECTION || 'true' }}
+          ENABLE_SUGGESTIONS: ${{ vars.ENABLE_SUGGESTIONS || 'true' }}
+          ENABLE_FEEDBACK_LEARNING: ${{ vars.ENABLE_FEEDBACK_LEARNING || 'true' }}
+          ENABLE_AUTO_UPDATE_REVIEW: ${{ vars.ENABLE_AUTO_UPDATE_REVIEW || 'true' }}
+          CHECK_SECURITY: ${{ vars.CHECK_SECURITY || 'true' }}
+          CHECK_PERFORMANCE: ${{ vars.CHECK_PERFORMANCE || 'true' }}
+          CHECK_BUGS: ${{ vars.CHECK_BUGS || 'true' }}
+          CHECK_LOGIC: ${{ vars.CHECK_LOGIC || 'true' }}
+          CHECK_MAINTAINABILITY: ${{ vars.CHECK_MAINTAINABILITY || 'true' }}
+
+      - name: Post review summary
+        if: always() && steps.review.outcome == 'success'
+        run: |
+          echo "### AI Review Complete :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ steps.review.outputs.review_status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Risk Score: ${{ steps.review.outputs.risk_score }}/100" >> $GITHUB_STEP_SUMMARY
+          echo "- Issues: ${{ steps.review.outputs.total_issues }} (${{ steps.review.outputs.critical_issues }} critical, ${{ steps.review.outputs.high_issues }} high)" >> $GITHUB_STEP_SUMMARY
+          echo "- Suggestions: ${{ steps.review.outputs.suggestions }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Model: ${{ steps.review.outputs.model }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "### AI Review Failed :x:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The AI review process encountered an error." >> $GITHUB_STEP_SUMMARY
+          echo "Error: ${{ steps.review.outputs.error || 'Unknown error' }}" >> $GITHUB_STEP_SUMMARY

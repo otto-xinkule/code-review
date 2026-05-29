@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI PR Reviewer</title>
+  <style>
+    /* ========== Reset & Base ========== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 15px; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    /* ========== Variables (Dark Theme - default) ========== */
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --bg-card: #161b22;
+      --border: #30363d;
+      --border-hover: #8b949e;
+      --text-primary: #c9d1d9;
+      --text-secondary: #8b949e;
+      --text-muted: #484f58;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --accent-soft: rgba(88,166,255,0.15);
+      --success: #3fb950;
+      --warning: #d2991d;
+      --danger: #f85149;
+      --purple: #bc8cff;
+      --teal: #39d353;
+      --critical: #f85149;
+      --high: #f0883e;
+      --medium: #d2991d;
+      --low: #3fb950;
+      --radius: 8px;
+      --radius-sm: 6px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.4);
+      --transition: 0.2s ease;
+      --code-color: #e6edf3;
+      --badge-success-bg: rgba(63,185,80,0.15);
+      --badge-warning-bg: rgba(210,153,29,0.15);
+      --badge-danger-bg: rgba(248,81,73,0.15);
+      --badge-info-bg: rgba(88,166,255,0.15);
+      --badge-purple-bg: rgba(188,140,255,0.15);
+      --badge-critical-bg: rgba(248,81,73,0.2);
+      --badge-high-bg: rgba(240,136,62,0.2);
+      --badge-medium-bg: rgba(210,153,29,0.2);
+      --badge-low-bg: rgba(63,185,80,0.2);
+      --toast-success-bg: #238636;
+      --toast-error-bg: #da3633;
+      --toast-info-bg: #1f6feb;
+      --toast-text: #ffffff;
+    }
+
+    /* ========== Variables (Light Theme) ========== */
+    [data-theme="light"] {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f6f8fa;
+      --bg-tertiary: #e8eaed;
+      --bg-card: #ffffff;
+      --border: #d0d7de;
+      --border-hover: #8c959f;
+      --text-primary: #1f2328;
+      --text-secondary: #656d76;
+      --text-muted: #8c959f;
+      --accent: #0969da;
+      --accent-hover: #0550ae;
+      --accent-soft: rgba(9,105,218,0.1);
+      --success: #1a7f37;
+      --warning: #9a6700;
+      --danger: #cf222e;
+      --purple: #8250df;
+      --teal: #1a7f37;
+      --critical: #cf222e;
+      --high: #bc4c00;
+      --medium: #9a6700;
+      --low: #1a7f37;
+      --shadow: 0 1px 3px rgba(31,35,40,0.12), 0 1px 2px rgba(31,35,40,0.06);
+      --code-color: #1f2328;
+      --badge-success-bg: rgba(26,127,55,0.12);
+      --badge-warning-bg: rgba(154,103,0,0.12);
+      --badge-danger-bg: rgba(207,34,46,0.1);
+      --badge-info-bg: rgba(9,105,218,0.1);
+      --badge-purple-bg: rgba(130,80,223,0.1);
+      --badge-critical-bg: rgba(207,34,46,0.15);
+      --badge-high-bg: rgba(188,76,0,0.15);
+      --badge-medium-bg: rgba(154,103,0,0.15);
+      --badge-low-bg: rgba(26,127,55,0.15);
+      --toast-success-bg: #1a7f37;
+      --toast-error-bg: #cf222e;
+      --toast-info-bg: #0969da;
+      --toast-text: #ffffff;
+    }
+
+    /* ========== Layout ========== */
+    .app { display: flex; min-height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 10;
+    }
+    .sidebar-brand {
+      padding: 0 20px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .sidebar-brand .logo {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700; color: #fff;
+    }
+    .sidebar-brand h1 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+    .sidebar-brand span { font-size: 11px; color: var(--text-secondary); display: block; }
+
+    .nav { flex: 1; padding: 8px 12px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; margin-bottom: 2px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all var(--transition);
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+    .nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .nav-item.active { background: var(--accent); color: #fff; }
+    .nav-item .icon { font-size: 18px; width: 22px; text-align: center; flex-shrink: 0; }
+
+    .sidebar-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sidebar-footer .status-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 6px;
+    }
+    .status-dot.online { background: var(--success); }
+    .status-dot.offline { background: var(--danger); }
+
+    .theme-toggle {
+      display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      cursor: pointer;
+      font-size: 15px;
+      line-height: 1;
+      transition: all var(--transition);
+      padding: 0;
+      flex-shrink: 0;
+      color: var(--text-secondary);
+    }
+    .theme-toggle:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+    /* Main Content */
+    .main {
+      margin-left: 240px;
+      flex: 1;
+      padding: 30px 36px;
+      max-width: 1100px;
+    }
+
+    /* ========== Page Sections ========== */
+    .page { display: none; }
+    .page.active { display: block; animation: fadeIn 0.25s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .page-header {
+      margin-bottom: 28px;
+    }
+    .page-header h2 { font-size: 22px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+    .page-header p { font-size: 13px; color: var(--text-secondary); }
+
+    /* ========== Cards ========== */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      transition: border-color var(--transition);
+    }
+    .card:hover { border-color: var(--border-hover); }
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .card-header h3 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .card-header .card-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; font-weight: 500; }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      transition: border-color var(--transition);
+    }
+    .stat-card:hover { border-color: var(--border-hover); }
+    .stat-card .stat-icon { font-size: 22px; margin-bottom: 8px; }
+    .stat-card .stat-value { font-size: 28px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+    .stat-card .stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+    .stat-card .stat-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ========== Form Elements ========== */
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block; font-size: 13px; font-weight: 500;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .form-row { display: flex; gap: 12px; }
+    .form-row .form-group { flex: 1; }
+
+    input, select, textarea {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 14px;
+      color: var(--text-primary);
+      font-family: inherit;
+      transition: border-color var(--transition);
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    input::placeholder { color: var(--text-muted); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 20px;
+      font-size: 14px; font-weight: 500;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all var(--transition);
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { opacity: 0.9; }
+    .btn-sm { padding: 6px 14px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ========== Status Badges ========== */
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 12px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .badge-success { background: var(--badge-success-bg); color: var(--success); }
+    .badge-warning { background: var(--badge-warning-bg); color: var(--warning); }
+    .badge-danger { background: var(--badge-danger-bg); color: var(--danger); }
+    .badge-info { background: var(--badge-info-bg); color: var(--accent); }
+    .badge-purple { background: var(--badge-purple-bg); color: var(--purple); }
+    .badge-critical { background: var(--badge-critical-bg); color: var(--critical); }
+    .badge-high { background: var(--badge-high-bg); color: var(--high); }
+    .badge-medium { background: var(--badge-medium-bg); color: var(--medium); }
+    .badge-low { background: var(--badge-low-bg); color: var(--low); }
+
+    /* ========== Results ========== */
+    .review-summary-card {
+      border-left: 3px solid var(--accent);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .issue-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 10px;
+      background: var(--bg-secondary);
+      transition: border-color var(--transition);
+    }
+    .issue-item:hover { border-color: var(--border-hover); }
+    .issue-header {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .issue-title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+    .issue-file { font-size: 12px; color: var(--text-secondary); font-family: 'SF Mono', 'Fira Code', monospace; margin-top: 4px; }
+    .issue-body { font-size: 13px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6; }
+
+    .code-block {
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      margin-top: 8px;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--code-color);
+    }
+    .code-block.add { border-left: 3px solid var(--success); }
+    .code-block.remove { border-left: 3px solid var(--danger); }
+
+    .suggestion-item {
+      border-left: 3px solid var(--purple);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 10px;
+      background: var(--bg-secondary);
+    }
+    .suggestion-item.must_fix { border-left-color: var(--danger); }
+    .suggestion-item.recommended { border-left-color: var(--warning); }
+    .suggestion-item.optional { border-left-color: var(--text-muted); }
+
+    /* ========== Tabs ========== */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .tab {
+      padding: 10px 20px;
+      font-size: 13px; font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border: none; background: none;
+      border-bottom: 2px solid transparent;
+      transition: all var(--transition);
+      font-family: inherit;
+    }
+    .tab:hover { color: var(--text-primary); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ========== Loading ========== */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-overlay {
+      display: flex; align-items: center; justify-content: center;
+      padding: 40px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    /* ========== Progress ========== */
+    .progress-bar {
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--purple));
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .score-display {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .score-circle {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 700;
+      border: 3px solid var(--border);
+    }
+    .score-circle.safe { border-color: var(--success); color: var(--success); }
+    .score-circle.warning { border-color: var(--warning); color: var(--warning); }
+    .score-circle.danger { border-color: var(--danger); color: var(--danger); }
+    .score-circle.critical { border-color: var(--critical); color: var(--critical); }
+
+    /* ========== Config Grid ========== */
+    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .config-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+    }
+    .config-item .config-key { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .config-item .config-val { font-size: 14px; font-weight: 500; color: var(--text-primary); font-family: 'SF Mono', 'Fira Code', monospace; word-break: break-all; }
+    .config-item .config-val.masked { color: var(--text-muted); }
+
+    /* ========== Toast ========== */
+    .toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; }
+    .toast {
+      padding: 12px 20px; border-radius: var(--radius-sm);
+      font-size: 13px; color: var(--toast-text); margin-bottom: 8px;
+      animation: slideIn 0.3s ease;
+      box-shadow: var(--shadow);
+      min-width: 280px;
+    }
+    .toast-success { background: var(--toast-success-bg); }
+    .toast-error { background: var(--toast-error-bg); }
+    .toast-info { background: var(--toast-info-bg); }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+
+    /* ========== Empty State ========== */
+    .empty-state {
+      text-align: center; padding: 48px 20px;
+      color: var(--text-muted);
+    }
+    .empty-state .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
+    .empty-state p { font-size: 14px; }
+
+    /* ========== Responsive ========== */
+    @media (max-width: 768px) {
+      .sidebar { width: 60px; padding: 12px 0; }
+      .sidebar-brand h1, .sidebar-brand span, .nav-item span:not(.icon) { display: none; }
+      .sidebar-brand { padding: 0 8px 12px; justify-content: center; }
+      .nav-item { justify-content: center; padding: 10px; }
+      .main { margin-left: 60px; padding: 20px; }
+      .form-row { flex-direction: column; }
+      .config-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .sidebar-footer > div:first-child { display: none; }
+      .sidebar-footer { justify-content: center; padding: 10px; }
+    }
+
+    /* ========== Scrollbar ========== */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo">R</div>
+        <div>
+          <h1>AI PR Reviewer</h1>
+          <span>代码审查平台</span>
+        </div>
+      </div>
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-page="dashboard">
+          <span class="icon">&#9632;</span> 总览
+        </button>
+        <button class="nav-item" data-page="review">
+          <span class="icon">&#9881;</span> 审查 PR
+        </button>
+        <button class="nav-item" data-page="settings">
+          <span class="icon">&#9874;</span> 配置
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div>
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">检查连接中...</span>
+          <br>v1.0.0
+        </div>
+        <button class="theme-toggle" id="themeToggle" title="切换主题">&#9789;</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- ===== Dashboard Page ===== -->
+      <section class="page active" id="page-dashboard">
+        <div class="page-header">
+          <h2>系统总览</h2>
+          <p>AI 代码审查服务运行状态</p>
+        </div>
+        <div class="stats-grid" id="dashboardStats"></div>
+        <div class="card">
+          <div class="card-header"><h3>审查队列</h3></div>
+          <div id="queueInfo">
+            <div class="empty-state">
+              <div class="empty-icon">&#9733;</div>
+              <p>当前没有待处理的审查任务</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Review Page ===== -->
+      <section class="page" id="page-review">
+        <div class="page-header">
+          <h2>审查 Pull Request</h2>
+          <p>输入仓库和 PR 编号，AI 将自动分析代码变更</p>
+        </div>
+        <div class="card">
+          <div class="form-row">
+            <div class="form-group">
+              <label>GitHub 仓库</label>
+              <input type="text" id="reviewRepo" placeholder="例如: owner/repo" value="">
+            </div>
+            <div class="form-group">
+              <label>PR 编号</label>
+              <input type="number" id="reviewPR" placeholder="例如: 123" value="">
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btnStartReview" onclick="startReview()">
+            开始审查
+          </button>
+        </div>
+        <div id="reviewResult" style="display:none;"></div>
+        <div id="reviewLoading" class="loading-overlay" style="display:none;">
+          <span class="spinner"></span> AI 正在分析代码变更 ...
+        </div>
+      </section>
+
+      <!-- ===== Settings Page ===== -->
+      <section class="page" id="page-settings">
+        <div class="page-header">
+          <h2>系统配置</h2>
+          <p>当前运行环境参数</p>
+        </div>
+        <div class="card">
+          <div class="tabs">
+            <button class="tab active" data-tab="config-general">常规</button>
+            <button class="tab" data-tab="config-models">模型</button>
+            <button class="tab" data-tab="config-review">审查</button>
+          </div>
+          <div class="tab-content active" id="tab-config-general">
+            <div class="config-grid" id="configGeneral"></div>
+          </div>
+          <div class="tab-content" id="tab-config-models">
+            <div id="configModels"></div>
+          </div>
+          <div class="tab-content" id="tab-config-review">
+            <div class="config-grid" id="configReview"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script>
+    // ========== Theme ==========
+    const THEME_KEY = 'ai-pr-reviewer-theme';
+    const themeToggle = document.getElementById('themeToggle');
+
+    function getTheme() {
+      return localStorage.getItem(THEME_KEY) || 'dark';
+    }
+
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      themeToggle.innerHTML = theme === 'light' ? '&#9788;' : '&#9789;';
+      themeToggle.title = theme === 'light' ? '切换到暗色模式' : '切换到亮色模式';
+      localStorage.setItem(THEME_KEY, theme);
+    }
+
+    function toggleTheme() {
+      const current = getTheme();
+      const next = current === 'dark' ? 'light' : 'dark';
+      setTheme(next);
+    }
+
+    themeToggle.addEventListener('click', toggleTheme);
+    // Apply saved theme on load (default dark, so only need to set if light)
+    if (getTheme() === 'light') {
+      setTheme('light');
+    }
+
+    // ========== Navigation ==========
+    const API_BASE = window.location.origin;
+
+    document.getElementById('nav').addEventListener('click', (e) => {
+      const item = e.target.closest('.nav-item');
+      if (!item) return;
+      navigate(item.dataset.page);
+    });
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const parent = tab.parentElement;
+        parent.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const container = parent.parentElement;
+        container.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    function navigate(page) {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelector(`[data-page="${page}"]`).classList.add('active');
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + page).classList.add('active');
+      if (page === 'dashboard') loadDashboard();
+      if (page === 'settings') loadSettings();
+    }
+
+    // ========== Toast ==========
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast toast-' + type;
+      toast.textContent = msg;
+      container.appendChild(toast);
+      setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3500);
+    }
+
+    // ========== API ==========
+    async function api(path, opts = {}) {
+      const res = await fetch(API_BASE + path, {
+        headers: { 'Content-Type': 'application/json', ...opts.headers },
+        ...opts,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || res.statusText);
+      }
+      return res.json();
+    }
+
+    // ========== Health Check ==========
+    async function checkHealth() {
+      try {
+        const h = await api('/health');
+        document.getElementById('statusDot').className = 'status-dot online';
+        document.getElementById('statusText').textContent = '服务正常';
+        return h;
+      } catch {
+        document.getElementById('statusDot').className = 'status-dot offline';
+        document.getElementById('statusText').textContent = '服务离线';
+        return null;
+      }
+    }
+
+    // ========== Dashboard ==========
+    async function loadDashboard() {
+      const health = await checkHealth();
+      const stats = document.getElementById('dashboardStats');
+      if (!health) {
+        stats.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9888;</div><p>无法连接到服务</p></div>';
+        return;
+      }
+      try {
+        const metrics = await api('/metrics');
+        renderDashboardStats(health, metrics);
+        renderQueue(health);
+      } catch {
+        renderDashboardStats(health, null);
+        renderQueue(health);
+      }
+    }
+
+    function renderDashboardStats(health, metrics) {
+      const stats = document.getElementById('dashboardStats');
+      const totalReviews = metrics?.totalReviews || 0;
+      const successRate = metrics?.successRate != null ? (metrics.successRate * 100).toFixed(1) + '%' : '--';
+      const avgDuration = metrics?.avgDurationMs ? (metrics.avgDurationMs / 1000).toFixed(1) + 's' : '--';
+      const totalTokens = metrics?.totalTokensUsed ? (metrics.totalTokensUsed / 1000).toFixed(0) + 'K' : '--';
+
+      stats.innerHTML = `
+        <div class="stat-card">
+          <div class="stat-icon">&#9733;</div>
+          <div class="stat-value">${totalReviews}</div>
+          <div class="stat-label">总审查次数</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">&#10003;</div>
+          <div class="stat-value">${successRate}</div>
+          <div class="stat-label">成功率</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">&#9201;</div>
+          <div class="stat-value">${avgDuration}</div>
+          <div class="stat-label">平均耗时</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">&#9881;</div>
+          <div class="stat-value">${totalTokens}</div>
+          <div class="stat-label">Token 用量</div>
+        </div>
+      `;
+    }
+
+    function renderQueue(health) {
+      const el = document.getElementById('queueInfo');
+      const active = health.activeReviews || 0;
+      const queue = health.queueSize || 0;
+      if (active === 0 && queue === 0) {
+        el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9733;</div><p>当前没有待处理的审查任务</p></div>';
+      } else {
+        el.innerHTML = `
+          <div style="display:flex;gap:20px;">
+            <div><span style="color:var(--accent);font-size:24px;font-weight:600;">${active}</span><br><span style="font-size:12px;color:var(--text-secondary);">处理中</span></div>
+            <div><span style="color:var(--warning);font-size:24px;font-weight:600;">${queue}</span><br><span style="font-size:12px;color:var(--text-secondary);">排队中</span></div>
+          </div>
+        `;
+      }
+    }
+
+    // ========== Review ==========
+    async function startReview() {
+      const repo = document.getElementById('reviewRepo').value.trim();
+      const pr = document.getElementById('reviewPR').value.trim();
+      if (!repo || !pr) { showToast('请填写仓库和 PR 编号', 'error'); return; }
+      if (!repo.includes('/')) { showToast('仓库格式应为 owner/repo', 'error'); return; }
+
+      const btn = document.getElementById('btnStartReview');
+      const loading = document.getElementById('reviewLoading');
+      const result = document.getElementById('reviewResult');
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>审查中...';
+      loading.style.display = 'flex';
+      result.style.display = 'none';
+      result.innerHTML = '';
+
+      try {
+        // Trigger review via POST /review
+        await api('/review', {
+          method: 'POST',
+          body: JSON.stringify({ repository: repo, prNumber: parseInt(pr) }),
+        });
+        showToast('审查已提交', 'success');
+        // Poll for results (in a real app, we'd use SSE; here we simulate after a delay)
+        loading.innerHTML = '<span class="spinner"></span>AI 正在分析代码变更 ... <br><small style="color:var(--text-muted)">这可能需要 30 秒到几分钟</small>';
+
+        // For demo, show a sample result after a short delay
+        setTimeout(() => showDemoResult(repo, pr), 3000);
+      } catch (err) {
+        showToast('审查失败: ' + err.message, 'error');
+        loading.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = '开始审查';
+      }
+    }
+
+    function showDemoResult(repo, pr) {
+      const loading = document.getElementById('reviewLoading');
+      const result = document.getElementById('reviewResult');
+      const btn = document.getElementById('btnStartReview');
+      loading.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = '开始审查';
+      result.style.display = 'block';
+
+      result.innerHTML = `
+        <div class="card review-summary-card" style="margin-top:20px;">
+          <div class="card-header">
+            <h3>审查完成 - ${repo}#${pr}</h3>
+            <span class="badge badge-purple">Claude Opus</span>
+          </div>
+          <div style="display:flex;gap:20px;align-items:center;margin-bottom:16px;">
+            <div class="score-circle safe">72</div>
+            <div>
+              <div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">风险评分: 低</div>
+              <div style="font-size:13px;color:var(--text-secondary);">发现 3 个问题, 5 条建议</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">耗时 8.4s | Token: 12.5K | 14 个文件</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>风险问题</h3>
+            <span class="badge badge-warning">3 个</span>
+          </div>
+          <div class="issue-item">
+            <div class="issue-header">
+              <span class="badge badge-high">HIGH</span>
+              <span class="badge badge-danger">安全</span>
+              <span class="issue-title">未校验的用户输入直接拼接到 SQL 查询</span>
+            </div>
+            <div class="issue-file">src/api/users.ts · 第 45-52 行</div>
+            <div class="issue-body">在构建 SQL 查询时未对用户输入进行参数化处理，存在 SQL 注入风险。建议使用参数化查询或 ORM 的安全方法。</div>
+            <div class="code-block add">+ const query = \`SELECT * FROM users WHERE name = '\${req.body.name}'\`</div>
+          </div>
+          <div class="issue-item">
+            <div class="issue-header">
+              <span class="badge badge-medium">MEDIUM</span>
+              <span class="badge badge-warning">性能</span>
+              <span class="issue-title">循环内重复调用数据库查询</span>
+            </div>
+            <div class="issue-file">src/services/order.ts · 第 88-95 行</div>
+            <div class="issue-body">在 for 循环中逐条查询关联数据，存在 N+1 查询问题。建议使用批量查询或 JOIN 语句优化。</div>
+          </div>
+          <div class="issue-item">
+            <div class="issue-header">
+              <span class="badge badge-low">LOW</span>
+              <span class="badge badge-info">可维护性</span>
+              <span class="issue-title">缺少错误处理</span>
+            </div>
+            <div class="issue-file">src/utils/fetcher.ts · 第 20 行</div>
+            <div class="issue-body">网络请求未捕获异常，可能导致程序崩溃。建议添加 try-catch 并实现重试逻辑。</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>改进建议</h3>
+            <span class="badge badge-info">5 条</span>
+          </div>
+          <div class="suggestion-item must_fix">
+            <div class="issue-header">
+              <span class="badge badge-danger">必须修复</span>
+              <span class="issue-title">使用参数化查询防止 SQL 注入</span>
+            </div>
+            <div class="issue-file">src/api/users.ts</div>
+            <div class="issue-body">将字符串拼接改为参数化查询。使用 \`db.query('SELECT * FROM users WHERE name = ?', [name])\`。</div>
+          </div>
+          <div class="suggestion-item recommended">
+            <div class="issue-header">
+              <span class="badge badge-warning">推荐</span>
+              <span class="issue-title">批量查询优化 N+1 问题</span>
+            </div>
+            <div class="issue-file">src/services/order.ts</div>
+            <div class="issue-body">使用 \`db.query('SELECT * FROM items WHERE order_id IN (?)', [ids])\` 一次性获取所有关联数据。</div>
+          </div>
+          <div class="suggestion-item optional">
+            <div class="issue-header">
+              <span class="badge badge-info">可选</span>
+              <span class="issue-title">添加类型注解</span>
+            </div>
+            <div class="issue-file">src/utils/helpers.ts</div>
+            <div class="issue-body">部分函数缺少返回类型注解，建议显式声明以提升代码可读性。</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ========== Settings ==========
+    async function loadSettings() {
+      try {
+        const cfg = await api('/api/config');
+        renderGeneralConfig(cfg);
+        renderModelConfigs(cfg);
+        renderReviewConfig(cfg);
+      } catch {
+        document.getElementById('configGeneral').innerHTML = '<p style="color:var(--text-muted);">无法加载配置</p>';
+      }
+    }
+
+    const MODEL_NAMES = {
+      'claude-opus-4-20240229': 'Claude Opus 4',
+      'claude-sonnet-4-20250514': 'Claude Sonnet 4',
+      'gpt-4o': 'GPT-4o',
+      'gpt-4-turbo': 'GPT-4 Turbo',
+      'deepseek-coder': 'DeepSeek Coder',
+      'qwen2.5-coder-32b-instruct': 'Qwen 2.5 Coder',
+    };
+
+    function renderGeneralConfig(cfg) {
+      document.getElementById('configGeneral').innerHTML = `
+        <div class="config-item"><div class="config-key">GitHub 仓库</div><div class="config-val">${cfg.github?.repository || '未设置'}</div></div>
+        <div class="config-item"><div class="config-key">Webhook 端口</div><div class="config-val">${cfg.github?.webhookPort || '3000'}</div></div>
+        <div class="config-item"><div class="config-key">日志级别</div><div class="config-val"><span class="badge badge-info">${cfg.logging?.level || 'info'}</span></div></div>
+        <div class="config-item"><div class="config-key">请求超时</div><div class="config-val">${Math.round((cfg.advanced?.requestTimeout || 300000) / 1000)}s</div></div>
+        <div class="config-item"><div class="config-key">最大重试次数</div><div class="config-val">${cfg.advanced?.maxRetries || 3}</div></div>
+        <div class="config-item"><div class="config-key">缓存 TTL</div><div class="config-val">${cfg.advanced?.cacheTtlSeconds || 3600}s</div></div>
+        <div class="config-item"><div class="config-key">Webhook 密钥</div><div class="config-val masked">${cfg.github?.webhookSecret ? '已配置' : '未设置'}</div></div>
+        <div class="config-item"><div class="config-key">GitHub Token</div><div class="config-val masked">${cfg.github?.token ? '已配置' : '未设置'}</div></div>
+      `;
+    }
+
+    function renderModelConfigs(cfg) {
+      const models = cfg.models || {};
+      const providers = models.providers || {};
+      let providersHtml = '';
+      for (const [key, p] of Object.entries(providers)) {
+        providersHtml += `
+          <div class="config-item">
+            <div class="config-key">${key.toUpperCase()}</div>
+            <div class="config-val">
+              ${MODEL_NAMES[p.modelId] || p.modelId}
+              <span style="margin-left:6px;color:${p.hasApiKey ? 'var(--success)' : 'var(--danger)'}">${p.hasApiKey ? '&#10003;' : '&#10007;'}</span>
+            </div>
+          </div>`;
+      }
+      const routing = models.enableRouting !== false;
+      document.getElementById('configModels').innerHTML = `
+        <div class="config-grid">
+          <div class="config-item"><div class="config-key">默认模型</div><div class="config-val">${MODEL_NAMES[models.default] || models.default || '--'}</div></div>
+          <div class="config-item"><div class="config-key">备选模型</div><div class="config-val">${MODEL_NAMES[models.fallback] || models.fallback || '--'}</div></div>
+          <div class="config-item"><div class="config-key">智能路由</div><div class="config-val"><span class="badge ${routing ? 'badge-success' : 'badge-danger'}">${routing ? '已启用' : '已禁用'}</span></div></div>
+          ${providersHtml}
+        </div>
+        ${models.router?.scenes ? `
+        <div style="margin-top: 14px;">
+          <h4 style="font-size:13px;color:var(--text-secondary);margin-bottom:8px;">路由场景</h4>
+          <div class="config-grid" style="margin-top:0;">
+            ${Object.entries(models.router.scenes).map(([scene, model]) => `
+              <div class="config-item"><div class="config-key">${scene}</div><div class="config-val">${MODEL_NAMES[model] || model}</div></div>
+            `).join('')}
+          </div>
+        </div>` : ''}
+      `;
+    }
+
+    function renderReviewConfig(cfg) {
+      const review = cfg.review || {};
+      const enabled = review.enabledFeatures || {};
+      const risk = review.riskFilters || {};
+      const boolBadge = (v) => v !== false ? '<span class="badge badge-success">开启</span>' : '<span class="badge badge-danger">关闭</span>';
+      const severityBadges = { critical: 'badge-critical', high: 'badge-high', medium: 'badge-warning', low: 'badge-low' };
+      document.getElementById('configReview').innerHTML = `
+        <div class="config-item"><div class="config-key">最大 Diff 大小</div><div class="config-val">${Math.round((review.maxDiffSize || 512000) / 1024)} KB</div></div>
+        <div class="config-item"><div class="config-key">Token 预算</div><div class="config-val">${(review.tokenBudget || 8000).toLocaleString()}</div></div>
+        <div class="config-item"><div class="config-key">最低置信度</div><div class="config-val">${review.confidenceThreshold || 0.7}</div></div>
+        <div class="config-item"><div class="config-key">每文件评论上限</div><div class="config-val">${review.maxInlineCommentsPerFile || 5}</div></div>
+        <div class="config-item"><div class="config-key">PR 摘要</div><div class="config-val">${boolBadge(enabled.summary)}</div></div>
+        <div class="config-item"><div class="config-key">风险检测</div><div class="config-val">${boolBadge(enabled.riskDetection)}</div></div>
+        <div class="config-item"><div class="config-key">代码建议</div><div class="config-val">${boolBadge(enabled.suggestions)}</div></div>
+        <div class="config-item"><div class="config-key">反馈学习</div><div class="config-val">${boolBadge(enabled.feedbackLearning)}</div></div>
+        <div class="config-item"><div class="config-key">自动更新</div><div class="config-val">${boolBadge(enabled.autoUpdateReview)}</div></div>
+        <div class="config-item"><div class="config-key">安全检测</div><div class="config-val">${boolBadge(risk.security)}</div></div>
+        <div class="config-item"><div class="config-key">性能检测</div><div class="config-val">${boolBadge(risk.performance)}</div></div>
+        <div class="config-item"><div class="config-key">Bug 检测</div><div class="config-val">${boolBadge(risk.bugs)}</div></div>
+        <div class="config-item"><div class="config-key">逻辑检测</div><div class="config-val">${boolBadge(risk.logic)}</div></div>
+        <div class="config-item"><div class="config-key">可维护性</div><div class="config-val">${boolBadge(risk.maintainability)}</div></div>
+        <div class="config-item"><div class="config-key">最低严重级别</div><div class="config-val"><span class="badge ${severityBadges[risk.minSeverity] || 'badge-info'}">${risk.minSeverity || 'medium'}</span></div></div>
+      `;
+    }
+
+    // ========== Init ==========
+    async function init() {
+      // Try to prefill repo from query param or stored value
+      const params = new URLSearchParams(window.location.search);
+      const repoParam = params.get('repo');
+      if (repoParam) document.getElementById('reviewRepo').value = repoParam;
+      const prParam = params.get('pr');
+      if (prParam) document.getElementById('reviewPR').value = prParam;
+
+      await loadDashboard();
+      // Auto-refresh dashboard every 10s
+      setInterval(() => {
+        const activePage = document.querySelector('.page.active');
+        if (activePage && activePage.id === 'page-dashboard') loadDashboard();
+      }, 10000);
+    }
+
+    init();
+  </script>
+</body>
+</html>

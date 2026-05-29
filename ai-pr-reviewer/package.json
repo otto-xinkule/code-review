@@ -1,0 +1,50 @@
+{
+  "name": "ai-pr-reviewer",
+  "version": "1.0.0",
+  "description": "AI-powered Pull Request code review tool with multi-model support, intelligent context management, and automated feedback publishing",
+  "main": "dist/index.js",
+  "bin": {
+    "ai-pr-review": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "review": "tsx src/index.ts review",
+    "review:actions": "tsx src/triggers/github-actions.ts",
+    "serve": "tsx src/triggers/webhook.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "npm run typecheck"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "@octokit/webhooks": "^13.0.0",
+    "diff": "^7.0.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "openai": "^4.80.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "tiktoken": "^1.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
