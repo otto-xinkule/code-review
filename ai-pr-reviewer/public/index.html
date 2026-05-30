@@ -743,6 +743,12 @@
     }
 
     // ========== Review ==========
+    let reviewPollTimer = null;
+    const SEVERITY_LABELS = { critical: '严重', high: '高', medium: '中', low: '低' };
+    const CATEGORY_LABELS = { security: '安全', performance: '性能', bug: '缺陷', logic: '逻辑', maintainability: '可维护性' };
+    const SUGGESTION_TYPE_LABELS = { must_fix: '必须修复', recommended: '推荐', optional: '可选' };
+    const IMPACT_LEVELS = { none: '无', low: '低', medium: '中', high: '高', critical: '严重' };
+
     async function startReview() {
       const repo = document.getElementById('reviewRepo').value.trim();
       const pr = document.getElementById('reviewPR').value.trim();
@@ -756,120 +762,160 @@
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>审查中...';
       loading.style.display = 'flex';
+      loading.innerHTML = '<span class="spinner"></span>AI 正在分析代码变更 ... <br><small style="color:var(--text-muted)">这可能需要 30 秒到几分钟</small>';
       result.style.display = 'none';
       result.innerHTML = '';
 
       try {
-        // Trigger review via POST /review
-        await api('/review', {
+        const data = await api('/review', {
           method: 'POST',
           body: JSON.stringify({ repository: repo, prNumber: parseInt(pr) }),
         });
         showToast('审查已提交', 'success');
-        // Poll for results (in a real app, we'd use SSE; here we simulate after a delay)
-        loading.innerHTML = '<span class="spinner"></span>AI 正在分析代码变更 ... <br><small style="color:var(--text-muted)">这可能需要 30 秒到几分钟</small>';
-
-        // For demo, show a sample result after a short delay
-        setTimeout(() => showDemoResult(repo, pr), 3000);
+        pollReviewResult(data.taskId, repo, pr);
       } catch (err) {
         showToast('审查失败: ' + err.message, 'error');
-        loading.style.display = 'none';
-        btn.disabled = false;
-        btn.textContent = '开始审查';
+        resetReviewUI();
       }
     }
 
-    function showDemoResult(repo, pr) {
+    async function pollReviewResult(taskId, repo, pr) {
+      if (reviewPollTimer) clearTimeout(reviewPollTimer);
+      try {
+        const data = await api('/review/result?task=' + encodeURIComponent(taskId));
+        if (data.status === 'processing') {
+          reviewPollTimer = setTimeout(() => pollReviewResult(taskId, repo, pr), 2000);
+          return;
+        }
+        if (data.status === 'error') {
+          showToast('审查失败: ' + (data.error || '未知错误'), 'error');
+          resetReviewUI();
+          return;
+        }
+        if (data.status === 'completed') {
+          renderReviewResult(data.result, repo, pr);
+        }
+      } catch (err) {
+        showToast('获取结果失败: ' + (err.message || '网络错误'), 'error');
+        resetReviewUI();
+      }
+    }
+
+    function resetReviewUI() {
+      const btn = document.getElementById('btnStartReview');
       const loading = document.getElementById('reviewLoading');
-      const result = document.getElementById('reviewResult');
+      loading.style.display = 'none';
+      btn.disabled = false;
+      btn.textContent = '开始审查';
+    }
+
+    function getScoreLevel(score) {
+      if (score >= 80) return 'safe';
+      if (score >= 60) return 'warning';
+      if (score >= 40) return 'danger';
+      return 'critical';
+    }
+
+    function renderReviewResult(result, repo, pr) {
+      const loading = document.getElementById('reviewLoading');
+      const el = document.getElementById('reviewResult');
       const btn = document.getElementById('btnStartReview');
       loading.style.display = 'none';
       btn.disabled = false;
       btn.textContent = '开始审查';
-      result.style.display = 'block';
+      el.style.display = 'block';
 
-      result.innerHTML = `
-        <div class="card review-summary-card" style="margin-top:20px;">
-          <div class="card-header">
-            <h3>审查完成 - ${repo}#${pr}</h3>
-            <span class="badge badge-purple">Claude Opus</span>
-          </div>
-          <div style="display:flex;gap:20px;align-items:center;margin-bottom:16px;">
-            <div class="score-circle safe">72</div>
-            <div>
-              <div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">风险评分: 低</div>
-              <div style="font-size:13px;color:var(--text-secondary);">发现 3 个问题, 5 条建议</div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">耗时 8.4s | Token: 12.5K | 14 个文件</div>
-            </div>
-          </div>
-        </div>
+      const { summary, riskReport, suggestions, metadata } = result;
+      const score = riskReport?.overallScore ?? 0;
+      const scoreLevel = getScoreLevel(score);
+      const modelName = metadata?.model || 'unknown';
+      const durationSec = metadata?.durationMs ? (metadata.durationMs / 1000).toFixed(1) + 's' : '--';
+      const tokens = metadata?.tokensUsed ? (metadata.tokensUsed / 1000).toFixed(1) + 'K' : '--';
+      const filesCount = summary?.statistics?.filesChanged || result.pr?.changedFiles || '--';
+      const issueCount = riskReport?.issues?.length || 0;
+      const suggestionCount = suggestions?.length || 0;
 
-        <div class="card">
-          <div class="card-header">
-            <h3>风险问题</h3>
-            <span class="badge badge-warning">3 个</span>
-          </div>
-          <div class="issue-item">
-            <div class="issue-header">
-              <span class="badge badge-high">HIGH</span>
-              <span class="badge badge-danger">安全</span>
-              <span class="issue-title">未校验的用户输入直接拼接到 SQL 查询</span>
-            </div>
-            <div class="issue-file">src/api/users.ts · 第 45-52 行</div>
-            <div class="issue-body">在构建 SQL 查询时未对用户输入进行参数化处理，存在 SQL 注入风险。建议使用参数化查询或 ORM 的安全方法。</div>
-            <div class="code-block add">+ const query = \`SELECT * FROM users WHERE name = '\${req.body.name}'\`</div>
-          </div>
-          <div class="issue-item">
-            <div class="issue-header">
-              <span class="badge badge-medium">MEDIUM</span>
-              <span class="badge badge-warning">性能</span>
-              <span class="issue-title">循环内重复调用数据库查询</span>
-            </div>
-            <div class="issue-file">src/services/order.ts · 第 88-95 行</div>
-            <div class="issue-body">在 for 循环中逐条查询关联数据，存在 N+1 查询问题。建议使用批量查询或 JOIN 语句优化。</div>
-          </div>
-          <div class="issue-item">
-            <div class="issue-header">
-              <span class="badge badge-low">LOW</span>
-              <span class="badge badge-info">可维护性</span>
-              <span class="issue-title">缺少错误处理</span>
-            </div>
-            <div class="issue-file">src/utils/fetcher.ts · 第 20 行</div>
-            <div class="issue-body">网络请求未捕获异常，可能导致程序崩溃。建议添加 try-catch 并实现重试逻辑。</div>
-          </div>
-        </div>
+      let html = '';
 
-        <div class="card">
-          <div class="card-header">
-            <h3>改进建议</h3>
-            <span class="badge badge-info">5 条</span>
-          </div>
-          <div class="suggestion-item must_fix">
-            <div class="issue-header">
-              <span class="badge badge-danger">必须修复</span>
-              <span class="issue-title">使用参数化查询防止 SQL 注入</span>
-            </div>
-            <div class="issue-file">src/api/users.ts</div>
-            <div class="issue-body">将字符串拼接改为参数化查询。使用 \`db.query('SELECT * FROM users WHERE name = ?', [name])\`。</div>
-          </div>
-          <div class="suggestion-item recommended">
-            <div class="issue-header">
-              <span class="badge badge-warning">推荐</span>
-              <span class="issue-title">批量查询优化 N+1 问题</span>
-            </div>
-            <div class="issue-file">src/services/order.ts</div>
-            <div class="issue-body">使用 \`db.query('SELECT * FROM items WHERE order_id IN (?)', [ids])\` 一次性获取所有关联数据。</div>
-          </div>
-          <div class="suggestion-item optional">
-            <div class="issue-header">
-              <span class="badge badge-info">可选</span>
-              <span class="issue-title">添加类型注解</span>
-            </div>
-            <div class="issue-file">src/utils/helpers.ts</div>
-            <div class="issue-body">部分函数缺少返回类型注解，建议显式声明以提升代码可读性。</div>
-          </div>
+      // Summary card
+      html += `<div class="card review-summary-card" style="margin-top:20px;">
+        <div class="card-header">
+          <h3>审查完成 - ${repo}#${pr}</h3>
+          <span class="badge badge-purple">${modelName}</span>
         </div>
-      `;
+        <div style="display:flex;gap:20px;align-items:center;margin-bottom:16px;">
+          <div class="score-circle ${scoreLevel}">${score}</div>
+          <div>
+            <div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">风险评分: ${SEVERITY_LABELS[getWorstSeverity(riskReport)] || '低'}</div>
+            <div style="font-size:13px;color:var(--text-secondary);">发现 ${issueCount} 个问题, ${suggestionCount} 条建议</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">耗时 ${durationSec} | Token: ${tokens} | ${filesCount} 个文件</div>
+          </div>
+        </div>`;
+      if (summary?.description) {
+        html += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-top:8px;">${escapeHtml(summary.description)}</div>`;
+      }
+      if (summary?.impact) {
+        html += `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;">影响程度: <span class="badge badge-${scoreLevel}">${IMPACT_LEVELS[summary.impact.level] || summary.impact.level}</span></div>`;
+      }
+      html += `</div>`;
+
+      // Risk Issues
+      if (riskReport?.issues?.length > 0) {
+        html += `<div class="card">
+          <div class="card-header"><h3>风险问题</h3><span class="badge badge-warning">${issueCount} 个</span></div>`;
+        for (const issue of riskReport.issues) {
+          const sevBadge = issue.severity === 'critical' ? 'badge-critical' : issue.severity === 'high' ? 'badge-high' : issue.severity === 'medium' ? 'badge-medium' : 'badge-low';
+          const catBadge = issue.category === 'security' ? 'badge-danger' : issue.category === 'performance' ? 'badge-warning' : 'badge-info';
+          html += `<div class="issue-item">
+            <div class="issue-header">
+              <span class="badge ${sevBadge}">${SEVERITY_LABELS[issue.severity] || issue.severity}</span>
+              <span class="badge ${catBadge}">${CATEGORY_LABELS[issue.category] || issue.category}</span>
+              <span class="issue-title">${escapeHtml(issue.title)}</span>
+            </div>
+            <div class="issue-file">${escapeHtml(issue.file)} · 第 ${issue.lineRange?.start || '?'}-${issue.lineRange?.end || '?'} 行</div>
+            <div class="issue-body">${escapeHtml(issue.description || '')}</div>`;
+          if (issue.codeSnippet) {
+            html += `<div class="code-block">${escapeHtml(issue.codeSnippet)}</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // Suggestions
+      if (suggestions?.length > 0) {
+        html += `<div class="card">
+          <div class="card-header"><h3>改进建议</h3><span class="badge badge-info">${suggestionCount} 条</span></div>`;
+        for (const s of suggestions) {
+          const typeBadge = s.type === 'must_fix' ? 'badge-danger' : s.type === 'recommended' ? 'badge-warning' : 'badge-info';
+          html += `<div class="suggestion-item ${s.type}">
+            <div class="issue-header">
+              <span class="badge ${typeBadge}">${SUGGESTION_TYPE_LABELS[s.type] || s.type}</span>
+              <span class="issue-title">${escapeHtml(s.title)}</span>
+            </div>
+            <div class="issue-file">${escapeHtml(s.file || '')}</div>
+            <div class="issue-body">${escapeHtml(s.description || '')}</div>`;
+          if (s.suggestedCode) {
+            html += `<div class="code-block">${escapeHtml(s.suggestedCode)}</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      el.innerHTML = html;
+    }
+
+    function getWorstSeverity(riskReport) {
+      if (!riskReport?.bySeverity) return 'low';
+      const order = ['critical', 'high', 'medium', 'low'];
+      for (const s of order) { if (riskReport.bySeverity[s] > 0) return s; }
+      return 'low';
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     // ========== Settings ==========

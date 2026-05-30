@@ -24,14 +24,25 @@ import { fileURLToPath } from 'url';
 import { logger } from '../utility/logger.js';
 import { metrics } from '../utility/metrics.js';
 import { getConfig } from '../config/index.js';
-import { handlePREvent } from '../index.js';
+import { handlePREvent, reviewPR } from '../index.js';
 import { parseWebhookEvent } from '../collectors/github-api.js';
+import type { ReviewResult } from '../types/index.js';
 
 // ESM compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const config = getConfig();
+
+// Review result storage type for async polling
+type ReviewTask = {
+  status: 'processing' | 'completed' | 'error';
+  repository: string;
+  prNumber: number;
+  createdAt: number;
+  result?: ReviewResult;
+  error?: string;
+};
 
 /**
  * Webhook Service class.
@@ -48,6 +59,7 @@ class WebhookService {
     event: string;
     timestamp: number;
   }> = [];
+  private reviewTasks: Map<string, ReviewTask> = new Map();
 
   constructor() {
     this.app = express();
@@ -176,7 +188,7 @@ class WebhookService {
       }
     });
 
-    // Manual trigger endpoint (for testing)
+    // Manual trigger endpoint (returns taskId for async polling)
     this.app.post('/review', async (req: Request, res: Response) => {
       try {
         const { repository, prNumber } = req.body;
@@ -192,43 +204,83 @@ class WebhookService {
           return;
         }
 
-        // Create a synthetic PR event
-        const event = {
-          action: 'opened' as const,
-          pr: {
-            repository,
-            prNumber: pr,
-            title: 'Manual review',
-            body: null,
-            author: 'manual',
-            baseBranch: 'main',
-            headBranch: 'feature',
-            baseSha: '',
-            headSha: '',
-            state: 'open' as const,
-            isDraft: false,
-            labels: [],
-            linkedIssues: [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            additions: 0,
-            deletions: 0,
-            changedFiles: 0,
-            isUpdate: false,
-          },
-          repository: {
-            owner: repository.split('/')[0],
-            repo: repository.split('/')[1] || '',
-            defaultBranch: 'main',
-          },
-        };
+        // Generate task ID and store initial status
+        const taskId = crypto.randomUUID();
+        this.reviewTasks.set(taskId, {
+          status: 'processing',
+          repository,
+          prNumber: pr,
+          createdAt: Date.now(),
+        });
 
-        res.json({ message: 'Review queued' });
-        await handlePREvent(event);
+        // Cleanup old tasks (> 1 hour)
+        const oneHourAgo = Date.now() - 3600 * 1000;
+        for (const [id, task] of this.reviewTasks) {
+          if (task.createdAt < oneHourAgo) this.reviewTasks.delete(id);
+        }
+
+        // Return taskId immediately
+        res.json({ taskId, message: 'Review started' });
+
+        // Run review asynchronously
+        (async () => {
+          try {
+            const result = await reviewPR(repository, pr, {
+              useCache: false,
+              forceReanalysis: false,
+            });
+
+            const task = this.reviewTasks.get(taskId);
+            if (!task) return;
+
+            if (result.success && result.result) {
+              task.status = 'completed';
+              task.result = result.result;
+            } else {
+              task.status = 'error';
+              task.error = result.error || 'Unknown error';
+            }
+          } catch (err: any) {
+            const task = this.reviewTasks.get(taskId);
+            if (task) {
+              task.status = 'error';
+              task.error = err?.message || String(err);
+            }
+            logger.error({ taskId, error: String(err) }, 'Review task failed');
+          }
+        })();
       } catch (error) {
         logger.error({ error: String(error) }, 'Manual review error');
         res.status(500).json({ error: 'Internal server error' });
       }
+    });
+
+    // Poll review result by taskId
+    this.app.get('/review/result', (req: Request, res: Response) => {
+      const taskId = req.query.task as string;
+      if (!taskId) {
+        res.status(400).json({ error: 'Missing task parameter' });
+        return;
+      }
+
+      const task = this.reviewTasks.get(taskId);
+      if (!task) {
+        res.status(404).json({ status: 'not_found', error: 'Task not found' });
+        return;
+      }
+
+      if (task.status === 'processing') {
+        res.json({ status: 'processing' });
+        return;
+      }
+
+      if (task.status === 'error') {
+        res.json({ status: 'error', error: task.error });
+        return;
+      }
+
+      // completed — return full result
+      res.json({ status: 'completed', result: task.result });
     });
 
     // Config endpoint (for frontend settings page)
