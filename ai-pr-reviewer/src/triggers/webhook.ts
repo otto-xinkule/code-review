@@ -42,6 +42,7 @@ type ReviewTask = {
   createdAt: number;
   result?: ReviewResult;
   error?: string;
+  feedback: Record<string, 'accept' | 'reject'>;
 };
 
 /**
@@ -211,6 +212,7 @@ class WebhookService {
           repository,
           prNumber: pr,
           createdAt: Date.now(),
+          feedback: {},
         });
 
         // Cleanup old tasks (> 1 hour)
@@ -279,8 +281,8 @@ class WebhookService {
         return;
       }
 
-      // completed — return full result
-      res.json({ status: 'completed', result: task.result });
+      // completed — return full result + feedback
+      res.json({ status: 'completed', result: task.result, feedback: task.feedback });
     });
 
     // Review history — list all completed reviews
@@ -354,6 +356,23 @@ class WebhookService {
         : 0;
 
       res.json({ bySeverity, byCategory, byChangeType, avgScore, totalReviews: scores.length });
+    });
+
+    // Feedback — accept or reject a review issue/suggestion
+    this.app.post('/api/feedback', (req: Request, res: Response) => {
+      const { taskId, issueId, action } = req.body;
+      if (!taskId || !issueId || !['accept', 'reject'].includes(action)) {
+        res.status(400).json({ error: 'Missing or invalid fields' });
+        return;
+      }
+      const task = this.reviewTasks.get(taskId);
+      if (!task) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+      }
+      task.feedback[issueId] = action;
+      logger.info({ taskId, issueId, action }, 'Feedback recorded');
+      res.json({ success: true, feedback: task.feedback });
     });
 
     // Config endpoint (for frontend settings page)

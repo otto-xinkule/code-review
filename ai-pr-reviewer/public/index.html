@@ -833,6 +833,10 @@
 
     // ========== Review ==========
     let reviewPollTimer = null;
+    let currentTaskId = null;
+    let currentFeedback = {};
+    let currentReviewData = null;
+    let reviewFilters = { severity: 'all', category: 'all' };
     const SEVERITY_LABELS = { critical: '严重', high: '高', medium: '中', low: '低' };
     const CATEGORY_LABELS = { security: '安全', performance: '性能', bug: '缺陷', logic: '逻辑', maintainability: '可维护性' };
     const SUGGESTION_TYPE_LABELS = { must_fix: '必须修复', recommended: '推荐', optional: '可选' };
@@ -883,7 +887,9 @@
           return;
         }
         if (data.status === 'completed') {
-          renderReviewResult(data.result, repo, pr);
+          currentTaskId = taskId;
+          currentFeedback = data.feedback || {};
+          renderReviewResult(data.result, repo, pr, currentFeedback);
         }
       } catch (err) {
         showToast('获取结果失败: ' + (err.message || '网络错误'), 'error');
@@ -906,7 +912,7 @@
       return 'critical';
     }
 
-    function renderReviewResult(result, repo, pr) {
+    function renderReviewResult(result, repo, pr, feedback) {
       const loading = document.getElementById('reviewLoading');
       const el = document.getElementById('reviewResult');
       const btn = document.getElementById('btnStartReview');
@@ -915,6 +921,10 @@
       btn.textContent = '开始审查';
       el.style.display = 'block';
 
+      // Store for filter re-render
+      currentReviewData = { result, repo, pr };
+      const fb = feedback || currentFeedback || {};
+
       const { summary, riskReport, suggestions, metadata } = result;
       const score = riskReport?.overallScore ?? 0;
       const scoreLevel = getScoreLevel(score);
@@ -922,7 +932,16 @@
       const durationSec = metadata?.durationMs ? (metadata.durationMs / 1000).toFixed(1) + 's' : '--';
       const tokens = metadata?.tokensUsed ? (metadata.tokensUsed / 1000).toFixed(1) + 'K' : '--';
       const filesCount = summary?.statistics?.filesChanged || result.pr?.changedFiles || '--';
-      const issueCount = riskReport?.issues?.length || 0;
+
+      // Filter issues
+      const allIssues = riskReport?.issues || [];
+      const filteredIssues = allIssues.filter(i => {
+        if (reviewFilters.severity !== 'all' && i.severity !== reviewFilters.severity) return false;
+        if (reviewFilters.category !== 'all' && i.category !== reviewFilters.category) return false;
+        return true;
+      });
+      const issueCount = filteredIssues.length;
+      const totalIssueCount = allIssues.length;
       const suggestionCount = suggestions?.length || 0;
 
       let html = '';
@@ -937,15 +956,13 @@
           <div class="score-circle ${scoreLevel}">${score}</div>
           <div>
             <div style="font-weight:600;color:var(--text-primary);margin-bottom:4px;">风险评分: ${SEVERITY_LABELS[getWorstSeverity(riskReport)] || '低'}</div>
-            <div style="font-size:13px;color:var(--text-secondary);">发现 ${issueCount} 个问题, ${suggestionCount} 条建议</div>
+            <div style="font-size:13px;color:var(--text-secondary);">发现 ${totalIssueCount} 个问题, ${suggestionCount} 条建议</div>
             <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">耗时 ${durationSec} | Token: ${tokens} | ${filesCount} 个文件</div>
           </div>
         </div>`;
       if (summary?.description) {
         html += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-top:8px;">${escapeHtml(summary.description)}</div>`;
       }
-
-      // Change type + impact
       html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">';
       if (summary?.changeType) {
         html += `<span class="badge badge-purple">${CHANGE_TYPE_LABELS[summary.changeType] || summary.changeType}</span>`;
@@ -954,15 +971,6 @@
         html += `<span style="font-size:12px;color:var(--text-muted);">影响: ${IMPACT_LEVELS[summary.impact.level] || summary.impact.level}</span>`;
       }
       html += '</div>';
-
-      // Affected modules
-      if (summary?.affectedModules?.length > 0) {
-        html += '<div style="margin-top:8px;font-size:12px;color:var(--text-secondary);">涉及模块: ' +
-          summary.affectedModules.map(m => `<span style="background:var(--bg-tertiary);padding:2px 8px;border-radius:4px;margin-right:4px;">${escapeHtml(m)}</span>`).join('') +
-          '</div>';
-      }
-
-      // Statistics
       if (summary?.statistics) {
         const st = summary.statistics;
         html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">';
@@ -974,25 +982,41 @@
         }
         html += '</div>';
       }
-
-      // Key files
-      if (summary?.keyFiles?.length > 0) {
-        html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">关键文件: ' +
-          summary.keyFiles.slice(0, 5).map(f => escapeHtml(typeof f === 'string' ? f : f.filename || '')).join(', ') +
-          (summary.keyFiles.length > 5 ? ' 等' + summary.keyFiles.length + '个文件' : '') +
-          '</div>';
-      }
-
       html += `</div>`;
 
+      // ── Filter bar ──
+      html += `<div class="card" style="padding:12px 20px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;">
+          <span style="color:var(--text-secondary);font-weight:500;">筛选:</span>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <span style="color:var(--text-muted);">严重度</span>
+            ${['all','critical','high','medium','low'].map(s =>
+              `<button class="btn btn-sm ${reviewFilters.severity === s ? 'btn-primary' : 'btn-secondary'}"
+                style="padding:2px 10px;font-size:11px;"
+                onclick="reviewFilters.severity='${s}';applyReviewFilters()">${s === 'all' ? '全部' : SEVERITY_LABELS[s]}</button>`
+            ).join('')}
+          </div>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <span style="color:var(--text-muted);">类别</span>
+            ${['all','security','performance','bug','logic','maintainability'].map(c =>
+              `<button class="btn btn-sm ${reviewFilters.category === c ? 'btn-primary' : 'btn-secondary'}"
+                style="padding:2px 10px;font-size:11px;"
+                onclick="reviewFilters.category='${c}';applyReviewFilters()">${c === 'all' ? '全部' : CATEGORY_LABELS[c] || c}</button>`
+            ).join('')}
+          </div>
+          ${totalIssueCount !== issueCount ? `<span style="color:var(--text-muted);margin-left:4px;">显示 ${issueCount}/${totalIssueCount} 个问题</span>` : ''}
+        </div>
+      </div>`;
+
       // Risk Issues
-      if (riskReport?.issues?.length > 0) {
+      if (allIssues.length > 0) {
         html += `<div class="card">
           <div class="card-header"><h3>风险问题</h3><span class="badge badge-warning">${issueCount} 个</span></div>`;
-        for (const issue of riskReport.issues) {
+        for (const issue of filteredIssues) {
+          const fbState = fb[issue.id];
           const sevBadge = issue.severity === 'critical' ? 'badge-critical' : issue.severity === 'high' ? 'badge-high' : issue.severity === 'medium' ? 'badge-medium' : 'badge-low';
           const catBadge = issue.category === 'security' ? 'badge-danger' : issue.category === 'performance' ? 'badge-warning' : 'badge-info';
-          html += `<div class="issue-item">
+          html += `<div class="issue-item" id="issue-${issue.id}" style="${fbState === 'reject' ? 'opacity:0.4;' : ''}">
             <div class="issue-header">
               <span class="badge ${sevBadge}">${SEVERITY_LABELS[issue.severity] || issue.severity}</span>
               <span class="badge ${catBadge}">${CATEGORY_LABELS[issue.category] || issue.category}</span>
@@ -1003,7 +1027,16 @@
           if (issue.codeSnippet) {
             html += `<div class="code-block">${escapeHtml(issue.codeSnippet)}</div>`;
           }
-          html += `</div>`;
+          html += `<div style="margin-top:8px;display:flex;gap:6px;">
+            <button class="btn btn-sm ${fbState === 'accept' ? 'btn-primary' : 'btn-secondary'}"
+              onclick="sendFeedback('${issue.id}','accept')" ${fbState === 'reject' ? '' : ''}>
+              &#10003; ${fbState === 'accept' ? '已采纳' : '采纳'}
+            </button>
+            <button class="btn btn-sm ${fbState === 'reject' ? 'btn-danger' : 'btn-secondary'}"
+              onclick="sendFeedback('${issue.id}','reject')" ${fbState === 'accept' ? '' : ''}>
+              &#10007; ${fbState === 'reject' ? '已拒绝' : '拒绝'}
+            </button>
+          </div></div>`;
         }
         html += `</div>`;
       }
@@ -1013,8 +1046,9 @@
         html += `<div class="card">
           <div class="card-header"><h3>改进建议</h3><span class="badge badge-info">${suggestionCount} 条</span></div>`;
         for (const s of suggestions) {
+          const fbState = fb[s.id];
           const typeBadge = s.type === 'must_fix' ? 'badge-danger' : s.type === 'recommended' ? 'badge-warning' : 'badge-info';
-          html += `<div class="suggestion-item ${s.type}">
+          html += `<div class="suggestion-item ${s.type}" style="${fbState === 'reject' ? 'opacity:0.4;' : ''}">
             <div class="issue-header">
               <span class="badge ${typeBadge}">${SUGGESTION_TYPE_LABELS[s.type] || s.type}</span>
               <span class="issue-title">${escapeHtml(s.title)}</span>
@@ -1024,12 +1058,45 @@
           if (s.suggestedCode) {
             html += `<div class="code-block">${escapeHtml(s.suggestedCode)}</div>`;
           }
-          html += `</div>`;
+          html += `<div style="margin-top:8px;display:flex;gap:6px;">
+            <button class="btn btn-sm ${fbState === 'accept' ? 'btn-primary' : 'btn-secondary'}"
+              onclick="sendFeedback('${s.id}','accept')">
+              &#10003; ${fbState === 'accept' ? '已采纳' : '采纳'}
+            </button>
+            <button class="btn btn-sm ${fbState === 'reject' ? 'btn-danger' : 'btn-secondary'}"
+              onclick="sendFeedback('${s.id}','reject')">
+              &#10007; ${fbState === 'reject' ? '已拒绝' : '拒绝'}
+            </button>
+          </div></div>`;
         }
         html += `</div>`;
       }
 
       el.innerHTML = html;
+    }
+
+    async function sendFeedback(issueId, action) {
+      if (!currentTaskId) return;
+      try {
+        const data = await api('/api/feedback', {
+          method: 'POST',
+          body: JSON.stringify({ taskId: currentTaskId, issueId, action }),
+        });
+        currentFeedback = data.feedback || {};
+        showToast(action === 'accept' ? '已采纳' : '已拒绝', action === 'accept' ? 'success' : 'info');
+        // Re-render with updated feedback
+        if (currentReviewData) {
+          renderReviewResult(currentReviewData.result, currentReviewData.repo, currentReviewData.pr, currentFeedback);
+        }
+      } catch (err) {
+        showToast('操作失败: ' + (err.message || ''), 'error');
+      }
+    }
+
+    function applyReviewFilters() {
+      if (currentReviewData) {
+        renderReviewResult(currentReviewData.result, currentReviewData.repo, currentReviewData.pr, currentFeedback);
+      }
     }
 
     function getWorstSeverity(riskReport) {
@@ -1093,8 +1160,10 @@
       try {
         const data = await api('/review/result?task=' + encodeURIComponent(taskId));
         if (data.status === 'completed') {
+          currentTaskId = taskId;
+          currentFeedback = data.feedback || {};
           const r = data.result;
-          renderReviewResult(r, r.pr?.repository || '', r.pr?.prNumber || '');
+          renderReviewResult(r, r.pr?.repository || '', r.pr?.prNumber || '', currentFeedback);
           navigate('review');
         } else {
           showToast('该审查记录已过期', 'info');
