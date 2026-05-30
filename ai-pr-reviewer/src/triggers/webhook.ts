@@ -283,6 +283,79 @@ class WebhookService {
       res.json({ status: 'completed', result: task.result });
     });
 
+    // Review history — list all completed reviews
+    this.app.get('/review/history', (_req: Request, res: Response) => {
+      const reviews: Array<{
+        taskId: string;
+        repository: string;
+        prNumber: number;
+        createdAt: number;
+        score: number;
+        issueCount: number;
+        suggestionCount: number;
+        model: string;
+        summary: string;
+        changeType: string;
+      }> = [];
+
+      for (const [taskId, task] of this.reviewTasks) {
+        if (task.status !== 'completed' || !task.result) continue;
+        const r = task.result;
+        reviews.push({
+          taskId,
+          repository: task.repository,
+          prNumber: task.prNumber,
+          createdAt: task.createdAt,
+          score: r.riskReport?.overallScore ?? 0,
+          issueCount: r.riskReport?.issues?.length || 0,
+          suggestionCount: r.suggestions?.length || 0,
+          model: r.metadata?.model || 'unknown',
+          summary: r.summary?.description || r.summary?.title || '',
+          changeType: r.summary?.changeType || 'mixed',
+        });
+      }
+
+      // Sort by most recent first
+      reviews.sort((a, b) => b.createdAt - a.createdAt);
+      res.json({ reviews });
+    });
+
+    // Aggregated risk/category stats for dashboard
+    this.app.get('/review/stats', (_req: Request, res: Response) => {
+      const bySeverity: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+      const byCategory: Record<string, number> = {
+        security: 0, performance: 0, bug: 0, logic: 0, maintainability: 0,
+      };
+      const byChangeType: Record<string, number> = {};
+      const scores: number[] = [];
+
+      for (const [, task] of this.reviewTasks) {
+        if (task.status !== 'completed' || !task.result) continue;
+        const r = task.result;
+
+        // Aggregate severities
+        for (const issue of r.riskReport?.issues || []) {
+          if (bySeverity[issue.severity] !== undefined) bySeverity[issue.severity]++;
+          if (byCategory[issue.category] !== undefined) byCategory[issue.category]++;
+        }
+
+        // Change type
+        const ct = r.summary?.changeType || 'mixed';
+        byChangeType[ct] = (byChangeType[ct] || 0) + 1;
+
+        // Scores
+        if (typeof r.riskReport?.overallScore === 'number') {
+          scores.push(r.riskReport.overallScore);
+        }
+      }
+
+      const avgScore = scores.length > 0
+        ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+        : 0;
+
+      res.json({ bySeverity, byCategory, byChangeType, avgScore, totalReviews: scores.length });
+    });
+
     // Config endpoint (for frontend settings page)
     this.app.get('/api/config', (_req: Request, res: Response) => {
       const cfg = getConfig();

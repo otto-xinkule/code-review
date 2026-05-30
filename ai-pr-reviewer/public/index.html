@@ -496,6 +496,9 @@
         <button class="nav-item" data-page="settings">
           <span class="icon">&#9874;</span> 配置
         </button>
+        <button class="nav-item" data-page="history">
+          <span class="icon">&#9776;</span> 历史
+        </button>
       </nav>
       <div class="sidebar-footer">
         <div>
@@ -524,6 +527,10 @@
               <p>当前没有待处理的审查任务</p>
             </div>
           </div>
+        </div>
+        <div class="card" id="riskStatsCard" style="display:none;">
+          <div class="card-header"><h3>风险分布统计</h3></div>
+          <div id="riskStats"></div>
         </div>
       </section>
 
@@ -574,6 +581,19 @@
           </div>
           <div class="tab-content" id="tab-config-review">
             <div class="config-grid" id="configReview"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== History Page ===== -->
+      <section class="page" id="page-history">
+        <div class="page-header">
+          <h2>审查历史</h2>
+          <p>所有已完成的代码审查记录</p>
+        </div>
+        <div id="historyList">
+          <div class="loading-overlay">
+            <span class="spinner"></span> 加载中...
           </div>
         </div>
       </section>
@@ -638,6 +658,7 @@
       document.getElementById('page-' + page).classList.add('active');
       if (page === 'dashboard') loadDashboard();
       if (page === 'settings') loadSettings();
+      if (page === 'history') loadHistory();
     }
 
     // ========== Toast ==========
@@ -693,6 +714,8 @@
         renderDashboardStats(health, null);
         renderQueue(health);
       }
+      // Load risk distribution stats
+      loadRiskStats();
     }
 
     function renderDashboardStats(health, metrics) {
@@ -748,12 +771,73 @@
       }
     }
 
+    // ========== Risk Stats for Dashboard ==========
+    async function loadRiskStats() {
+      try {
+        const data = await api('/review/stats');
+        renderRiskStats(data);
+      } catch {
+        document.getElementById('riskStatsCard').style.display = 'none';
+      }
+    }
+
+    function renderRiskStats(data) {
+      const card = document.getElementById('riskStatsCard');
+      const el = document.getElementById('riskStats');
+      if (!data || data.totalReviews === 0) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+
+      const SEV_ORDER = ['critical', 'high', 'medium', 'low'];
+      const SEV_COLORS = { critical: 'var(--critical)', high: 'var(--high)', medium: 'var(--medium)', low: 'var(--low)' };
+      const CAT_COLORS = { security: 'var(--danger)', performance: 'var(--warning)', bug: 'var(--high)', logic: 'var(--purple)', maintainability: 'var(--accent)' };
+
+      const maxSev = Math.max(1, ...SEV_ORDER.map(s => data.bySeverity?.[s] || 0));
+      const maxCat = Math.max(1, ...Object.values(data.byCategory || {}));
+
+      let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">';
+
+      // Severity distribution
+      html += '<div><div style="font-size:13px;font-weight:500;color:var(--text-secondary);margin-bottom:10px;">按严重程度</div>';
+      for (const s of SEV_ORDER) {
+        const val = data.bySeverity?.[s] || 0;
+        const pct = Math.round(val / maxSev * 100);
+        html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">
+          <span style="width:45px;color:var(--text-secondary);text-transform:capitalize;">${SEVERITY_LABELS[s] || s}</span>
+          <div style="flex:1;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${pct}%;background:${SEV_COLORS[s] || 'var(--accent)'};border-radius:3px;transition:width 0.4s;"></div>
+          </div>
+          <span style="width:24px;text-align:right;color:var(--text-primary);font-weight:600;">${val}</span>
+        </div>`;
+      }
+      html += '</div>';
+
+      // Category distribution
+      html += '<div><div style="font-size:13px;font-weight:500;color:var(--text-secondary);margin-bottom:10px;">按风险类别</div>';
+      for (const [cat, val] of Object.entries(data.byCategory || {})) {
+        const pct = Math.round(Number(val) / maxCat * 100);
+        const label = CATEGORY_LABELS[cat] || cat;
+        html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;">
+          <span style="width:45px;color:var(--text-secondary);">${label}</span>
+          <div style="flex:1;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${pct}%;background:${CAT_COLORS[cat] || 'var(--accent)'};border-radius:3px;transition:width 0.4s;"></div>
+          </div>
+          <span style="width:24px;text-align:right;color:var(--text-primary);font-weight:600;">${val}</span>
+        </div>`;
+      }
+      html += '</div></div>';
+
+      // Summary line
+      html += `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">基于 ${data.totalReviews} 次审查｜变更类型：${Object.entries(data.byChangeType || {}).map(([k,v]) => k + '(' + v + ')').join(', ') || '无'}</div>`;
+      el.innerHTML = html;
+    }
+
     // ========== Review ==========
     let reviewPollTimer = null;
     const SEVERITY_LABELS = { critical: '严重', high: '高', medium: '中', low: '低' };
     const CATEGORY_LABELS = { security: '安全', performance: '性能', bug: '缺陷', logic: '逻辑', maintainability: '可维护性' };
     const SUGGESTION_TYPE_LABELS = { must_fix: '必须修复', recommended: '推荐', optional: '可选' };
     const IMPACT_LEVELS = { none: '无', low: '低', medium: '中', high: '高', critical: '严重' };
+    const CHANGE_TYPE_LABELS = { feature: '新功能', bugfix: '修复', refactor: '重构', performance: '性能优化', docs: '文档', test: '测试', chore: '杂项', mixed: '混合' };
 
     async function startReview() {
       const repo = document.getElementById('reviewRepo').value.trim();
@@ -860,9 +944,45 @@
       if (summary?.description) {
         html += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-top:8px;">${escapeHtml(summary.description)}</div>`;
       }
-      if (summary?.impact) {
-        html += `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;">影响程度: <span class="badge badge-${scoreLevel}">${IMPACT_LEVELS[summary.impact.level] || summary.impact.level}</span></div>`;
+
+      // Change type + impact
+      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">';
+      if (summary?.changeType) {
+        html += `<span class="badge badge-purple">${CHANGE_TYPE_LABELS[summary.changeType] || summary.changeType}</span>`;
       }
+      if (summary?.impact) {
+        html += `<span style="font-size:12px;color:var(--text-muted);">影响: ${IMPACT_LEVELS[summary.impact.level] || summary.impact.level}</span>`;
+      }
+      html += '</div>';
+
+      // Affected modules
+      if (summary?.affectedModules?.length > 0) {
+        html += '<div style="margin-top:8px;font-size:12px;color:var(--text-secondary);">涉及模块: ' +
+          summary.affectedModules.map(m => `<span style="background:var(--bg-tertiary);padding:2px 8px;border-radius:4px;margin-right:4px;">${escapeHtml(m)}</span>`).join('') +
+          '</div>';
+      }
+
+      // Statistics
+      if (summary?.statistics) {
+        const st = summary.statistics;
+        html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">';
+        if (st.byLanguage && Object.keys(st.byLanguage).length) {
+          html += '语言: ' + Object.entries(st.byLanguage).map(([k, v]) => k + '(' + v + ')').join(', ');
+        }
+        if (st.byType && Object.keys(st.byType).length) {
+          html += (Object.keys(st.byLanguage || {}).length ? ' | ' : '') + '类型: ' + Object.entries(st.byType).map(([k, v]) => k + '(' + v + ')').join(', ');
+        }
+        html += '</div>';
+      }
+
+      // Key files
+      if (summary?.keyFiles?.length > 0) {
+        html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">关键文件: ' +
+          summary.keyFiles.slice(0, 5).map(f => escapeHtml(typeof f === 'string' ? f : f.filename || '')).join(', ') +
+          (summary.keyFiles.length > 5 ? ' 等' + summary.keyFiles.length + '个文件' : '') +
+          '</div>';
+      }
+
       html += `</div>`;
 
       // Risk Issues
@@ -922,6 +1042,66 @@
     function escapeHtml(str) {
       if (!str) return '';
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ========== History ==========
+    async function loadHistory() {
+      const el = document.getElementById('historyList');
+      el.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> 加载中...</div>';
+      try {
+        const data = await api('/review/history');
+        renderHistory(data.reviews || []);
+      } catch {
+        el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9888;</div><p>无法加载历史记录</p></div>';
+      }
+    }
+
+    function renderHistory(reviews) {
+      const el = document.getElementById('historyList');
+      if (!reviews.length) {
+        el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9733;</div><p>暂无审查记录，快去审查一个 PR 吧</p></div>';
+        return;
+      }
+
+      let html = '';
+      for (const r of reviews) {
+        const scoreLevel = getScoreLevel(r.score);
+        const time = new Date(r.createdAt).toLocaleString('zh-CN');
+        html += `<div class="card" style="cursor:pointer;" onclick="loadReviewDetail('${r.taskId}')">
+          <div class="card-header">
+            <h3>${escapeHtml(r.repository)}#${r.prNumber}</h3>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <span class="badge badge-purple">${r.model}</span>
+              <span class="badge badge-info">${CHANGE_TYPE_LABELS[r.changeType] || r.changeType}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:16px;align-items:center;">
+            <div class="score-circle ${scoreLevel}" style="width:48px;height:48px;font-size:16px;">${r.score}</div>
+            <div>
+              <div style="font-size:13px;color:var(--text-secondary);">${r.summary ? escapeHtml(r.summary.substring(0, 100)) : '无摘要'}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                ${r.issueCount} 个问题 · ${r.suggestionCount} 条建议 · ${time}
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    async function loadReviewDetail(taskId) {
+      try {
+        const data = await api('/review/result?task=' + encodeURIComponent(taskId));
+        if (data.status === 'completed') {
+          const r = data.result;
+          renderReviewResult(r, r.pr?.repository || '', r.pr?.prNumber || '');
+          navigate('review');
+        } else {
+          showToast('该审查记录已过期', 'info');
+        }
+      } catch {
+        showToast('加载审查详情失败', 'error');
+      }
     }
 
     // ========== Settings ==========
