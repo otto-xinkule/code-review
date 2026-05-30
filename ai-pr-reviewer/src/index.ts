@@ -137,6 +137,18 @@ export async function reviewPR(
       'PR review pipeline completed',
     );
 
+    // Record metrics
+    metrics.recordReviewCompletion({
+      success: true,
+      durationMs,
+      model: result.metadata.model,
+      action: 'manual',
+      tokensInput: result.metadata.tokensUsed,
+      suggestions: result.suggestions.length,
+      issues: result.riskReport?.issues.length || 0,
+      critical: result.riskReport?.issues.filter(i => i.severity === 'critical').length || 0,
+    });
+
     return { success: true, result };
   } catch (error) {
     const durationMs = Date.now() - startTime;
@@ -149,6 +161,16 @@ export async function reviewPR(
       },
       'PR review pipeline failed',
     );
+
+    // Record failed metrics
+    try {
+      metrics.recordReviewCompletion({
+        success: false,
+        durationMs,
+        model: config.models.default,
+        action: 'manual',
+      });
+    } catch {}
 
     return {
       success: false,

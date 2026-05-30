@@ -697,10 +697,16 @@
 
     function renderDashboardStats(health, metrics) {
       const stats = document.getElementById('dashboardStats');
-      const totalReviews = metrics?.totalReviews || 0;
-      const successRate = metrics?.successRate != null ? (metrics.successRate * 100).toFixed(1) + '%' : '--';
-      const avgDuration = metrics?.avgDurationMs ? (metrics.avgDurationMs / 1000).toFixed(1) + 's' : '--';
-      const totalTokens = metrics?.totalTokensUsed ? (metrics.totalTokensUsed / 1000).toFixed(0) + 'K' : '--';
+      const totalReviews = metrics?.totalProcessed || 0;
+      const successRate = metrics?.totalProcessed > 0
+        ? ((metrics.totalSucceeded || 0) / metrics.totalProcessed * 100).toFixed(1) + '%'
+        : '--';
+      const avgDuration = metrics?.averageDurationMs
+        ? (metrics.averageDurationMs / 1000).toFixed(1) + 's'
+        : '--';
+      const totalTokens = metrics?.tokensUsed?.total
+        ? (metrics.tokensUsed.total / 1000).toFixed(0) + 'K'
+        : '--';
 
       stats.innerHTML = `
         <div class="stat-card">
