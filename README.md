@@ -1,3 +1,5 @@
+播放地址https://www.bilibili.com/video/BV1fxVo6ZEtF/?vd_source=c044e9fc1b540c5b4e2450454036571d
+
 # AI PR Reviewer
 
 AI 驱动的 Pull Request 代码审查工具，支持多模型、智能路由、上下文管理和反馈闭环。
